@@ -1,0 +1,516 @@
+openapi: 3.0.3
+info:
+  title: External API Integration Contracts
+  version: 1.0.0
+  description: Contracts for external API integrations (Google Calendar, Places, ぐるなび)
+
+paths:
+  /google/calendar/events:
+    post:
+      summary: Create Google Calendar event
+      description: Creates calendar event for confirmed participants
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCalendarEventRequest'
+      responses:
+        '201':
+          description: Calendar event created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarEventResponse'
+        '401':
+          description: OAuth token invalid or expired
+        '403':
+          description: Insufficient calendar permissions
+
+  /google/calendar/availability:
+    post:
+      summary: Check participant availability
+      description: Queries participant calendars for free/busy information
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AvailabilityRequest'
+      responses:
+        '200':
+          description: Availability information retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvailabilityResponse'
+
+  /google/calendar/resources:
+    get:
+      summary: List meeting room resources
+      description: Gets available meeting rooms from Google Workspace
+      parameters:
+        - name: capacity_min
+          in: query
+          schema:
+            type: integer
+        - name: start_time
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: end_time
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Available meeting rooms
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeetingRoomsResponse'
+
+    post:
+      summary: Book meeting room
+      description: Reserves a meeting room resource
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookMeetingRoomRequest'
+      responses:
+        '201':
+          description: Meeting room booked successfully
+        '409':
+          description: Meeting room not available
+
+  /venues/search:
+    post:
+      summary: Search for venues
+      description: Searches restaurants and venues using multiple APIs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VenueSearchRequest'
+      responses:
+        '200':
+          description: Venue search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VenueSearchResponse'
+
+  /venues/{venue_id}/booking:
+    post:
+      summary: Initiate venue booking
+      description: Attempts to book venue or provides manual booking instructions
+      parameters:
+        - name: venue_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VenueBookingRequest'
+      responses:
+        '200':
+          description: Booking initiated or manual instructions provided
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VenueBookingResponse'
+
+components:
+  schemas:
+    CreateCalendarEventRequest:
+      type: object
+      required:
+        - title
+        - start_time
+        - end_time
+        - attendee_emails
+      properties:
+        title:
+          type: string
+          example: "Team Lunch - イタリアン"
+        description:
+          type: string
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        location:
+          type: string
+        attendee_emails:
+          type: array
+          items:
+            type: string
+            format: email
+        meeting_room_resource_id:
+          type: string
+          description: Google Workspace resource ID for meeting room
+
+    CalendarEventResponse:
+      type: object
+      required:
+        - google_event_id
+        - calendar_email
+        - status
+      properties:
+        google_event_id:
+          type: string
+        calendar_email:
+          type: string
+          format: email
+        status:
+          type: string
+          enum: [created, failed]
+        meeting_room_booked:
+          type: boolean
+        attendee_responses:
+          type: array
+          items:
+            $ref: '#/components/schemas/AttendeeResponse'
+
+    AttendeeResponse:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        response_status:
+          type: string
+          enum: [needsAction, accepted, declined, tentative]
+
+    AvailabilityRequest:
+      type: object
+      required:
+        - participant_emails
+        - time_min
+        - time_max
+      properties:
+        participant_emails:
+          type: array
+          items:
+            type: string
+            format: email
+        time_min:
+          type: string
+          format: date-time
+        time_max:
+          type: string
+          format: date-time
+
+    AvailabilityResponse:
+      type: object
+      required:
+        - participant_availability
+      properties:
+        participant_availability:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParticipantAvailability'
+
+    ParticipantAvailability:
+      type: object
+      required:
+        - email
+        - busy_times
+      properties:
+        email:
+          type: string
+          format: email
+        busy_times:
+          type: array
+          items:
+            $ref: '#/components/schemas/BusyTimeSlot'
+        timezone:
+          type: string
+
+    BusyTimeSlot:
+      type: object
+      required:
+        - start
+        - end
+      properties:
+        start:
+          type: string
+          format: date-time
+        end:
+          type: string
+          format: date-time
+
+    MeetingRoomsResponse:
+      type: object
+      required:
+        - resources
+      properties:
+        resources:
+          type: array
+          items:
+            $ref: '#/components/schemas/MeetingRoomResource'
+
+    MeetingRoomResource:
+      type: object
+      required:
+        - resource_id
+        - name
+        - capacity
+        - available
+      properties:
+        resource_id:
+          type: string
+        name:
+          type: string
+        capacity:
+          type: integer
+        available:
+          type: boolean
+        equipment:
+          type: array
+          items:
+            type: string
+
+    BookMeetingRoomRequest:
+      type: object
+      required:
+        - resource_id
+        - start_time
+        - end_time
+        - organizer_email
+      properties:
+        resource_id:
+          type: string
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        organizer_email:
+          type: string
+          format: email
+        event_title:
+          type: string
+
+    VenueSearchRequest:
+      type: object
+      required:
+        - location
+        - party_size
+        - event_type
+      properties:
+        location:
+          type: string
+          description: Location query (address, landmark, area)
+        party_size:
+          type: integer
+          minimum: 1
+        event_type:
+          type: string
+          enum: [dining, meeting, study]
+        cuisine_type:
+          type: string
+          description: Preferred cuisine for dining events
+        budget_per_person:
+          type: integer
+          description: Budget in yen per person
+        date_time:
+          type: string
+          format: date-time
+          description: Preferred reservation time
+
+    VenueSearchResponse:
+      type: object
+      required:
+        - venues
+        - total_results
+        - search_metadata
+      properties:
+        venues:
+          type: array
+          items:
+            $ref: '#/components/schemas/VenueResult'
+        total_results:
+          type: integer
+        search_metadata:
+          $ref: '#/components/schemas/SearchMetadata'
+
+    VenueResult:
+      type: object
+      required:
+        - venue_id
+        - name
+        - address
+        - venue_type
+        - source_api
+      properties:
+        venue_id:
+          type: string
+        name:
+          type: string
+        address:
+          type: string
+        venue_type:
+          type: string
+          enum: [restaurant, meeting_room, cafe, event_space]
+        capacity:
+          type: integer
+        source_api:
+          type: string
+          enum: [google_places, gurume_navi]
+        rating:
+          type: number
+          minimum: 0
+          maximum: 5
+        price_level:
+          type: integer
+          minimum: 1
+          maximum: 4
+          description: 1=inexpensive, 4=expensive
+        estimated_cost_per_person:
+          type: integer
+          description: Estimated cost in yen
+        phone_number:
+          type: string
+        website_url:
+          type: string
+        menu_url:
+          type: string
+        photos:
+          type: array
+          items:
+            type: string
+            format: uri
+        opening_hours:
+          $ref: '#/components/schemas/OpeningHours'
+        booking_availability:
+          $ref: '#/components/schemas/BookingAvailability'
+
+    SearchMetadata:
+      type: object
+      properties:
+        google_places_results:
+          type: integer
+        gurume_navi_results:
+          type: integer
+        search_radius_km:
+          type: number
+        fallback_searches_used:
+          type: array
+          items:
+            type: string
+
+    OpeningHours:
+      type: object
+      properties:
+        open_now:
+          type: boolean
+        periods:
+          type: array
+          items:
+            $ref: '#/components/schemas/OpeningPeriod'
+
+    OpeningPeriod:
+      type: object
+      properties:
+        day:
+          type: integer
+          description: Day of week (0=Sunday, 6=Saturday)
+        open:
+          type: string
+          pattern: '^[0-2][0-9][0-5][0-9]$'
+          description: Opening time in HHMM format
+        close:
+          type: string
+          pattern: '^[0-2][0-9][0-5][0-9]$'
+          description: Closing time in HHMM format
+
+    BookingAvailability:
+      type: object
+      properties:
+        supports_online_booking:
+          type: boolean
+        booking_url:
+          type: string
+          format: uri
+        requires_phone_booking:
+          type: boolean
+        booking_notes:
+          type: string
+
+    VenueBookingRequest:
+      type: object
+      required:
+        - reservation_date
+        - reservation_time
+        - party_size
+        - contact_name
+        - contact_phone
+      properties:
+        reservation_date:
+          type: string
+          format: date
+        reservation_time:
+          type: string
+          pattern: '^[0-2][0-9]:[0-5][0-9]$'
+        party_size:
+          type: integer
+          minimum: 1
+        contact_name:
+          type: string
+        contact_phone:
+          type: string
+        special_requests:
+          type: string
+        dietary_restrictions:
+          type: array
+          items:
+            type: string
+
+    VenueBookingResponse:
+      type: object
+      required:
+        - booking_status
+        - booking_method
+      properties:
+        booking_status:
+          type: string
+          enum: [confirmed, pending, manual_required, failed]
+        booking_method:
+          type: string
+          enum: [online, phone, manual]
+        confirmation_number:
+          type: string
+        manual_booking_instructions:
+          type: string
+          description: Instructions for organizer to complete booking manually
+        venue_contact_info:
+          $ref: '#/components/schemas/VenueContactInfo'
+        estimated_response_time:
+          type: string
+          description: How long until booking confirmation
+
+    VenueContactInfo:
+      type: object
+      properties:
+        phone_number:
+          type: string
+        business_hours:
+          type: string
+        booking_notes:
+          type: string
+        preferred_contact_method:
+          type: string
+          enum: [phone, email, online]

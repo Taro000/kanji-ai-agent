@@ -1,0 +1,177 @@
+name-template: 'v$RESOLVED_VERSION'
+tag-template: 'v$RESOLVED_VERSION'
+
+categories:
+  - title: '🚀 Features'
+    labels:
+      - 'feature'
+      - 'enhancement'
+  - title: '🐛 Bug Fixes'
+    labels:
+      - 'bug'
+      - 'bugfix'
+      - 'fix'
+  - title: '🧪 Tests'
+    labels:
+      - 'test'
+      - 'tests'
+  - title: '📚 Documentation'
+    labels:
+      - 'documentation'
+      - 'docs'
+  - title: '🔧 Maintenance'
+    labels:
+      - 'chore'
+      - 'maintenance'
+      - 'refactor'
+  - title: '⚡ Performance'
+    labels:
+      - 'performance'
+      - 'optimization'
+  - title: '🔒 Security'
+    labels:
+      - 'security'
+
+exclude-labels:
+  - 'skip-changelog'
+
+change-template: '- $TITLE @$AUTHOR (#$NUMBER)'
+change-title-escapes: '\<*_&' # You can add # and @ to disable mentions, and add ` to disable code blocks.
+
+version-resolver:
+  major:
+    labels:
+      - 'major'
+      - 'breaking'
+  minor:
+    labels:
+      - 'minor'
+      - 'feature'
+      - 'enhancement'
+  patch:
+    labels:
+      - 'patch'
+      - 'bug'
+      - 'bugfix'
+      - 'fix'
+      - 'chore'
+      - 'maintenance'
+  default: patch
+
+template: |
+  ## Enhanced Slack Bot Event Organizer AI Agent - Release $RESOLVED_VERSION
+
+  ### 📅 Release Date: $DATE
+
+  $CHANGES
+
+  ### 🔧 Installation & Deployment
+
+  #### Docker Image
+  ```bash
+  docker pull asia-northeast1-docker.pkg.dev/your-project/slack-bot-event-organizer/slack-bot-event-organizer:v$RESOLVED_VERSION
+  ```
+
+  #### GCP Cloud Run Deployment
+  ```bash
+  gcloud run deploy slack-bot-event-organizer \
+    --image=asia-northeast1-docker.pkg.dev/your-project/slack-bot-event-organizer/slack-bot-event-organizer:v$RESOLVED_VERSION \
+    --region=asia-northeast1 \
+    --platform=managed
+  ```
+
+  ### 🏗️ Technical Details
+
+  - **Python Version**: 3.11+
+  - **Framework**: Agent Development Kit (ADK)
+  - **Architecture**: Multi-agent system with specialized components
+  - **APIs**: Slack Bolt SDK, Google Calendar API, Google Places API, ぐるなび API
+  - **Database**: GCP Firestore
+  - **Deployment**: GCP Cloud Run
+
+  ### 🎯 Agent Components
+
+  - **Coordination Agent**: Event workflow orchestration
+  - **Participant Agent**: DM interaction and confirmation management
+  - **Scheduling Agent**: Time slot optimization and coordination
+  - **Venue Agent**: Multi-API venue search with fallback strategies
+  - **Calendar Agent**: Google Workspace integration and booking
+
+  ### 📊 Performance Targets
+
+  - Response Time: < 500ms for event coordination
+  - Concurrent Users: Up to 100 simultaneous event workflows
+  - API Rate Limits: Intelligent throttling and fallback mechanisms
+  - Availability: 99.9% uptime with auto-scaling
+
+  ### 🔐 Security Features
+
+  - OAuth2.0 authentication for Google services
+  - Encrypted token storage in GCP Secret Manager
+  - Slack signature verification
+  - PII data protection and audit trails
+
+  ### 📝 Configuration Requirements
+
+  **Required Environment Variables:**
+  - `SLACK_BOT_TOKEN`: Slack Bot User OAuth Token
+  - `SLACK_SIGNING_SECRET`: Slack App Signing Secret
+  - `GOOGLE_CALENDAR_CLIENT_ID`: Google Calendar API Client ID
+  - `GOOGLE_CALENDAR_CLIENT_SECRET`: Google Calendar API Client Secret
+  - `GOOGLE_PLACES_API_KEY`: Google Places API Key
+  - `GURUME_NAVI_API_KEY`: ぐるなび API Key
+  - `GCP_PROJECT_ID`: Google Cloud Project ID
+
+  ### 🚨 Breaking Changes
+
+  > **Note**: Please review the migration guide if upgrading from a previous version.
+
+  ### 💬 Support & Feedback
+
+  - **Issues**: [GitHub Issues](https://github.com/your-username/slack-bot-event-organizer/issues)
+  - **Documentation**: [Deployment Guide](docs/deployment.md)
+  - **API Reference**: [OpenAPI Specifications](specs/002-slack-bot-ai/contracts/)
+
+  ### 🙏 Acknowledgments
+
+  Special thanks to all contributors who helped make this release possible!
+
+autolabeler:
+  - label: 'feature'
+    title:
+      - '/^feat(\(.+\))?: .+/'
+      - '/^add(\(.+\))?: .+/'
+      - '/^implement(\(.+\))?: .+/'
+  - label: 'bug'
+    title:
+      - '/^fix(\(.+\))?: .+/'
+      - '/^bug(\(.+\))?: .+/'
+  - label: 'chore'
+    title:
+      - '/^chore(\(.+\))?: .+/'
+      - '/^update(\(.+\))?: .+/'
+      - '/^refactor(\(.+\))?: .+/'
+  - label: 'documentation'
+    files:
+      - '*.md'
+      - 'docs/*'
+    title:
+      - '/^docs(\(.+\))?: .+/'
+  - label: 'test'
+    files:
+      - 'tests/**/*'
+    title:
+      - '/^test(\(.+\))?: .+/'
+  - label: 'performance'
+    title:
+      - '/^perf(\(.+\))?: .+/'
+      - '/^performance(\(.+\))?: .+/'
+      - '/^optimize(\(.+\))?: .+/'
+  - label: 'security'
+    title:
+      - '/^security(\(.+\))?: .+/'
+      - '/^sec(\(.+\))?: .+/'
+  - label: 'breaking'
+    title:
+      - '/^breaking(\(.+\))?: .+/'
+      - '/BREAKING CHANGE/'

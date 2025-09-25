@@ -1,0 +1,1 @@
+"""Contract tests validating API compliance with OpenAPI specifications."""

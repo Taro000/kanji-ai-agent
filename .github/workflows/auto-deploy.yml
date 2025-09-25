@@ -1,0 +1,250 @@
+name: Auto Deploy
+
+on:
+  push:
+    branches: [ main ]
+  workflow_run:
+    workflows: ["CI"]
+    branches: [ main ]
+    types: [ completed ]
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  SERVICE_NAME: slack-bot-event-organizer
+  REGION: asia-northeast1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy to Cloud Run
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'push' }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v1
+      with:
+        project_id: ${{ env.PROJECT_ID }}
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        export_default_credentials: true
+
+    - name: Configure Docker for GCP
+      run: |
+        gcloud auth configure-docker asia-northeast1-docker.pkg.dev
+
+    - name: Build and tag image
+      run: |
+        export IMAGE_TAG="${REGION}-docker.pkg.dev/${PROJECT_ID}/${SERVICE_NAME}/${SERVICE_NAME}:${{ github.sha }}"
+        echo "IMAGE_TAG=${IMAGE_TAG}" >> $GITHUB_ENV
+
+        docker build -t ${IMAGE_TAG} .
+        docker tag ${IMAGE_TAG} ${REGION}-docker.pkg.dev/${PROJECT_ID}/${SERVICE_NAME}/${SERVICE_NAME}:latest
+
+    - name: Push image to Artifact Registry
+      run: |
+        docker push ${{ env.IMAGE_TAG }}
+        docker push ${REGION}-docker.pkg.dev/${PROJECT_ID}/${SERVICE_NAME}/${SERVICE_NAME}:latest
+
+    - name: Deploy to Cloud Run
+      run: |
+        gcloud run deploy ${{ env.SERVICE_NAME }} \
+          --image=${{ env.IMAGE_TAG }} \
+          --region=${{ env.REGION }} \
+          --platform=managed \
+          --allow-unauthenticated \
+          --memory=1Gi \
+          --cpu=1 \
+          --timeout=300 \
+          --max-instances=10 \
+          --min-instances=0 \
+          --concurrency=80 \
+          --port=8080 \
+          --set-env-vars="ENV=production" \
+          --set-env-vars="GCP_PROJECT_ID=${{ env.PROJECT_ID }}" \
+          --set-env-vars="FIRESTORE_DATABASE=(default)" \
+          --set-secrets="SLACK_BOT_TOKEN=slack-bot-token:latest" \
+          --set-secrets="SLACK_SIGNING_SECRET=slack-signing-secret:latest" \
+          --set-secrets="GOOGLE_CALENDAR_CLIENT_ID=google-calendar-client-id:latest" \
+          --set-secrets="GOOGLE_CALENDAR_CLIENT_SECRET=google-calendar-client-secret:latest" \
+          --set-secrets="GOOGLE_PLACES_API_KEY=google-places-api-key:latest" \
+          --set-secrets="GURUME_NAVI_API_KEY=gurume-navi-api-key:latest" \
+          --execution-environment=gen2
+
+    - name: Get service URL
+      run: |
+        SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+          --region=${{ env.REGION }} \
+          --format='value(status.url)')
+        echo "SERVICE_URL=${SERVICE_URL}" >> $GITHUB_ENV
+        echo "Service deployed at: ${SERVICE_URL}"
+
+    - name: Health check
+      run: |
+        echo "Waiting for service to be ready..."
+        sleep 30
+
+        # Health check endpoint
+        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${{ env.SERVICE_URL }}/health")
+
+        if [ "$HTTP_STATUS" = "200" ]; then
+          echo "✅ Health check passed (HTTP $HTTP_STATUS)"
+        else
+          echo "❌ Health check failed (HTTP $HTTP_STATUS)"
+          exit 1
+        fi
+
+    - name: Test Firestore connection
+      run: |
+        # Test database connectivity
+        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${{ env.SERVICE_URL }}/api/health/db")
+
+        if [ "$HTTP_STATUS" = "200" ]; then
+          echo "✅ Database connectivity check passed"
+        else
+          echo "⚠️ Database connectivity check failed (HTTP $HTTP_STATUS)"
+          echo "Service deployed but database connection may be impaired"
+        fi
+
+    - name: Update traffic allocation
+      run: |
+        # Gradually route traffic to new revision
+        gcloud run services update-traffic ${{ env.SERVICE_NAME }} \
+          --region=${{ env.REGION }} \
+          --to-latest=100
+
+    - name: Post deployment notification
+      if: always()
+      run: |
+        if [ "${{ job.status }}" = "success" ]; then
+          echo "🚀 Deployment successful!"
+          echo "Service URL: ${{ env.SERVICE_URL }}"
+          echo "Image: ${{ env.IMAGE_TAG }}"
+          echo "Commit: ${{ github.sha }}"
+        else
+          echo "💥 Deployment failed!"
+          echo "Check logs for details"
+        fi
+
+  smoke-test:
+    runs-on: ubuntu-latest
+    name: Smoke Tests
+    needs: [deploy]
+    if: success()
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+
+    - name: Install test dependencies
+      run: |
+        pip install httpx pytest pytest-asyncio
+
+    - name: Get service URL
+      run: |
+        echo "SERVICE_URL=${{ needs.deploy.outputs.SERVICE_URL }}" >> $GITHUB_ENV
+
+    - name: Run smoke tests
+      run: |
+        python -c "
+        import asyncio
+        import httpx
+        import sys
+
+        async def smoke_test():
+            base_url = '${{ env.SERVICE_URL }}'
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                # Test health endpoint
+                try:
+                    response = await client.get(f'{base_url}/health')
+                    assert response.status_code == 200
+                    print('✅ Health endpoint OK')
+                except Exception as e:
+                    print(f'❌ Health endpoint failed: {e}')
+                    return False
+
+                # Test API endpoints
+                try:
+                    response = await client.get(f'{base_url}/api/v1/events')
+                    assert response.status_code in [200, 401, 403]  # Auth required is OK
+                    print('✅ API endpoint reachable')
+                except Exception as e:
+                    print(f'❌ API endpoint failed: {e}')
+                    return False
+
+                # Test Slack webhook endpoint
+                try:
+                    response = await client.post(f'{base_url}/slack/events',
+                                               json={'type': 'url_verification', 'challenge': 'test'})
+                    # May fail auth but should not 500
+                    assert response.status_code < 500
+                    print('✅ Slack webhook endpoint reachable')
+                except Exception as e:
+                    print(f'❌ Slack webhook failed: {e}')
+                    return False
+
+            return True
+
+        if not asyncio.run(smoke_test()):
+            sys.exit(1)
+
+        print('🎉 All smoke tests passed!')
+        "
+
+  rollback-on-failure:
+    runs-on: ubuntu-latest
+    name: Rollback on Failure
+    needs: [deploy, smoke-test]
+    if: failure()
+
+    steps:
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v1
+      with:
+        project_id: ${{ env.PROJECT_ID }}
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        export_default_credentials: true
+
+    - name: Get previous revision
+      run: |
+        PREVIOUS_REVISION=$(gcloud run revisions list \
+          --service=${{ env.SERVICE_NAME }} \
+          --region=${{ env.REGION }} \
+          --limit=2 \
+          --format="value(metadata.name)" | tail -n 1)
+
+        echo "PREVIOUS_REVISION=${PREVIOUS_REVISION}" >> $GITHUB_ENV
+        echo "Rolling back to: ${PREVIOUS_REVISION}"
+
+    - name: Rollback deployment
+      if: env.PREVIOUS_REVISION != ''
+      run: |
+        gcloud run services update-traffic ${{ env.SERVICE_NAME }} \
+          --region=${{ env.REGION }} \
+          --to-revisions=${{ env.PREVIOUS_REVISION }}=100
+
+        echo "🔄 Rolled back to previous revision: ${{ env.PREVIOUS_REVISION }}"
+
+    - name: Verify rollback
+      if: env.PREVIOUS_REVISION != ''
+      run: |
+        sleep 10
+        SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+          --region=${{ env.REGION }} \
+          --format='value(status.url)')
+
+        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${SERVICE_URL}/health")
+
+        if [ "$HTTP_STATUS" = "200" ]; then
+          echo "✅ Rollback successful - service is healthy"
+        else
+          echo "❌ Rollback verification failed"
+          exit 1
+        fi

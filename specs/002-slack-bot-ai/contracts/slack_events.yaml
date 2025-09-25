@@ -1,0 +1,242 @@
+openapi: 3.0.3
+info:
+  title: Slack Bot Event Organizer - Slack Events API
+  version: 1.0.0
+  description: Contract for handling Slack event subscriptions and interactions
+
+paths:
+  /slack/events:
+    post:
+      summary: Handle Slack Event API callbacks
+      description: Processes Slack events including bot mentions, DM messages, and thread replies
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/UrlVerification'
+                - $ref: '#/components/schemas/EventCallback'
+      responses:
+        '200':
+          description: Event processed successfully
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "OK"
+        '400':
+          description: Invalid event format
+        '401':
+          description: Invalid signing secret
+
+  /slack/interactive:
+    post:
+      summary: Handle Slack interactive components
+      description: Processes button clicks, menu selections, and modal submissions
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                payload:
+                  type: string
+                  description: JSON-encoded interaction payload
+      responses:
+        '200':
+          description: Interaction processed successfully
+
+components:
+  schemas:
+    UrlVerification:
+      type: object
+      required:
+        - type
+        - challenge
+      properties:
+        type:
+          type: string
+          enum: ['url_verification']
+        challenge:
+          type: string
+          description: Challenge string to echo back
+
+    EventCallback:
+      type: object
+      required:
+        - type
+        - event
+      properties:
+        type:
+          type: string
+          enum: ['event_callback']
+        team_id:
+          type: string
+        api_app_id:
+          type: string
+        event:
+          oneOf:
+            - $ref: '#/components/schemas/BotMention'
+            - $ref: '#/components/schemas/DirectMessage'
+            - $ref: '#/components/schemas/ThreadReply'
+
+    BotMention:
+      type: object
+      required:
+        - type
+        - text
+        - user
+        - channel
+        - ts
+      properties:
+        type:
+          type: string
+          enum: ['app_mention']
+        text:
+          type: string
+          description: Message text containing bot mention
+        user:
+          type: string
+          description: Slack user ID of the organizer
+        channel:
+          type: string
+          description: Slack channel ID
+        ts:
+          type: string
+          description: Message timestamp
+        thread_ts:
+          type: string
+          description: Parent message timestamp if in thread
+
+    DirectMessage:
+      type: object
+      required:
+        - type
+        - text
+        - user
+        - channel
+        - ts
+      properties:
+        type:
+          type: string
+          enum: ['message']
+        subtype:
+          type: string
+          description: Message subtype
+        text:
+          type: string
+          description: DM message content
+        user:
+          type: string
+          description: Slack user ID
+        channel:
+          type: string
+          description: DM channel ID (starts with D)
+        ts:
+          type: string
+          description: Message timestamp
+
+    ThreadReply:
+      type: object
+      required:
+        - type
+        - text
+        - user
+        - channel
+        - ts
+        - thread_ts
+      properties:
+        type:
+          type: string
+          enum: ['message']
+        text:
+          type: string
+          description: Thread reply content
+        user:
+          type: string
+          description: Slack user ID
+        channel:
+          type: string
+          description: Channel ID
+        ts:
+          type: string
+          description: Message timestamp
+        thread_ts:
+          type: string
+          description: Parent thread timestamp
+
+    InteractionPayload:
+      type: object
+      required:
+        - type
+        - user
+        - trigger_id
+      properties:
+        type:
+          type: string
+          enum: ['block_actions', 'view_submission', 'view_closed']
+        user:
+          $ref: '#/components/schemas/SlackUser'
+        trigger_id:
+          type: string
+          description: Trigger ID for opening modals
+        actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/BlockAction'
+        view:
+          $ref: '#/components/schemas/ModalView'
+
+    SlackUser:
+      type: object
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: string
+          description: Slack user ID
+        name:
+          type: string
+          description: User display name
+        email:
+          type: string
+          description: User email address
+
+    BlockAction:
+      type: object
+      required:
+        - action_id
+        - type
+        - value
+      properties:
+        action_id:
+          type: string
+          description: Unique action identifier
+        type:
+          type: string
+          enum: ['button', 'static_select', 'multi_static_select']
+        value:
+          type: string
+          description: Selected value or button payload
+
+    ModalView:
+      type: object
+      properties:
+        id:
+          type: string
+          description: View ID
+        type:
+          type: string
+          enum: ['modal']
+        title:
+          type: object
+          description: Modal title
+        blocks:
+          type: array
+          description: Modal content blocks
+        state:
+          type: object
+          description: Form input values

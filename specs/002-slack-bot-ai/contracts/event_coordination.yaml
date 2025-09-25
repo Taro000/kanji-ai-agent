@@ -1,0 +1,585 @@
+openapi: 3.0.3
+info:
+  title: Event Coordination API
+  version: 1.0.0
+  description: Internal API contracts for event coordination workflow
+
+paths:
+  /events:
+    post:
+      summary: Create new event coordination session
+      description: Initiates event coordination workflow from bot mention
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEventRequest'
+      responses:
+        '201':
+          description: Event created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventResponse'
+        '400':
+          description: Invalid request parameters
+
+    get:
+      summary: List events
+      description: Retrieve events by channel, organizer, or status
+      parameters:
+        - name: channel_id
+          in: query
+          schema:
+            type: string
+        - name: organizer_id
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/EventStatus'
+      responses:
+        '200':
+          description: Events retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EventResponse'
+
+  /events/{event_id}:
+    get:
+      summary: Get event details
+      parameters:
+        - name: event_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Event details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventResponse'
+        '404':
+          description: Event not found
+
+    patch:
+      summary: Update event status or details
+      parameters:
+        - name: event_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateEventRequest'
+      responses:
+        '200':
+          description: Event updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventResponse'
+
+  /events/{event_id}/participants:
+    post:
+      summary: Add participants to event
+      parameters:
+        - name: event_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddParticipantsRequest'
+      responses:
+        '201':
+          description: Participants added successfully
+
+    get:
+      summary: Get event participants
+      parameters:
+        - name: event_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Participants list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ParticipantResponse'
+
+  /events/{event_id}/participants/{participant_id}/confirmation:
+    post:
+      summary: Update participant confirmation status
+      parameters:
+        - name: event_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: participant_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ParticipantConfirmationRequest'
+      responses:
+        '200':
+          description: Confirmation updated successfully
+
+  /events/{event_id}/scheduling:
+    post:
+      summary: Propose schedule options
+      parameters:
+        - name: event_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduleProposalRequest'
+      responses:
+        '200':
+          description: Schedule options generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduleOptionsResponse'
+
+    patch:
+      summary: Finalize event schedule
+      parameters:
+        - name: event_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FinalizeScheduleRequest'
+      responses:
+        '200':
+          description: Schedule finalized successfully
+
+  /events/{event_id}/venues:
+    post:
+      summary: Search and propose venues
+      parameters:
+        - name: event_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VenueSearchRequest'
+      responses:
+        '200':
+          description: Venue options found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VenueOptionsResponse'
+
+    patch:
+      summary: Select and book venue
+      parameters:
+        - name: event_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VenueSelectionRequest'
+      responses:
+        '200':
+          description: Venue booking initiated
+
+components:
+  schemas:
+    CreateEventRequest:
+      type: object
+      required:
+        - channel_id
+        - organizer_id
+        - event_type
+        - purpose
+        - participants
+      properties:
+        channel_id:
+          type: string
+          description: Slack channel ID
+        organizer_id:
+          type: string
+          description: Slack user ID of organizer
+        event_type:
+          $ref: '#/components/schemas/EventType'
+        purpose:
+          type: string
+          description: Event purpose description
+        participants:
+          type: array
+          items:
+            type: string
+          description: List of Slack user IDs
+        coordination_preferences:
+          $ref: '#/components/schemas/CoordinationPreferences'
+
+    EventResponse:
+      type: object
+      required:
+        - event_id
+        - channel_id
+        - organizer_id
+        - event_type
+        - status
+        - created_at
+      properties:
+        event_id:
+          type: string
+        channel_id:
+          type: string
+        organizer_id:
+          type: string
+        event_type:
+          $ref: '#/components/schemas/EventType'
+        purpose:
+          type: string
+        status:
+          $ref: '#/components/schemas/EventStatus'
+        scheduled_datetime:
+          type: string
+          format: date-time
+        venue:
+          $ref: '#/components/schemas/VenueResponse'
+        participants:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParticipantResponse'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    UpdateEventRequest:
+      type: object
+      properties:
+        status:
+          $ref: '#/components/schemas/EventStatus'
+        purpose:
+          type: string
+        scheduled_datetime:
+          type: string
+          format: date-time
+
+    AddParticipantsRequest:
+      type: object
+      required:
+        - participant_ids
+      properties:
+        participant_ids:
+          type: array
+          items:
+            type: string
+          description: List of Slack user IDs to add
+
+    ParticipantResponse:
+      type: object
+      required:
+        - participant_id
+        - slack_user_id
+        - participation_status
+      properties:
+        participant_id:
+          type: string
+        slack_user_id:
+          type: string
+        participation_status:
+          $ref: '#/components/schemas/ParticipationStatus'
+        available_time_slots:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimeSlot'
+        dietary_restrictions:
+          type: string
+        confirmed_at:
+          type: string
+          format: date-time
+
+    ParticipantConfirmationRequest:
+      type: object
+      required:
+        - participation_status
+      properties:
+        participation_status:
+          $ref: '#/components/schemas/ParticipationStatus'
+        available_time_slots:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimeSlot'
+        dietary_restrictions:
+          type: string
+
+    ScheduleProposalRequest:
+      type: object
+      required:
+        - event_type
+        - participant_count
+      properties:
+        event_type:
+          $ref: '#/components/schemas/EventType'
+        participant_count:
+          type: integer
+          minimum: 1
+        preferred_duration_hours:
+          type: number
+          minimum: 0.5
+        earliest_date:
+          type: string
+          format: date
+        latest_date:
+          type: string
+          format: date
+
+    ScheduleOptionsResponse:
+      type: object
+      required:
+        - options
+      properties:
+        options:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScheduleOption'
+          minItems: 5
+          maxItems: 20
+
+    ScheduleOption:
+      type: object
+      required:
+        - option_id
+        - start_datetime
+        - end_datetime
+        - day_of_week
+        - compatibility_score
+      properties:
+        option_id:
+          type: string
+        start_datetime:
+          type: string
+          format: date-time
+        end_datetime:
+          type: string
+          format: date-time
+        day_of_week:
+          type: string
+        time_description:
+          type: string
+          description: Human-readable time description
+        compatibility_score:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Fraction of participants available
+
+    FinalizeScheduleRequest:
+      type: object
+      required:
+        - selected_option_id
+      properties:
+        selected_option_id:
+          type: string
+
+    VenueSearchRequest:
+      type: object
+      required:
+        - event_type
+        - participant_count
+        - scheduled_datetime
+      properties:
+        event_type:
+          $ref: '#/components/schemas/EventType'
+        participant_count:
+          type: integer
+          minimum: 1
+        scheduled_datetime:
+          type: string
+          format: date-time
+        location_preference:
+          type: string
+          description: Geographic area or specific location
+        budget_per_person:
+          type: integer
+          description: Budget in yen per person
+
+    VenueOptionsResponse:
+      type: object
+      required:
+        - venues
+      properties:
+        venues:
+          type: array
+          items:
+            $ref: '#/components/schemas/VenueOption'
+          minItems: 5
+          maxItems: 10
+
+    VenueOption:
+      type: object
+      required:
+        - venue_id
+        - name
+        - address
+        - capacity
+        - venue_type
+      properties:
+        venue_id:
+          type: string
+        name:
+          type: string
+        address:
+          type: string
+        capacity:
+          type: integer
+        venue_type:
+          $ref: '#/components/schemas/VenueType'
+        estimated_cost_per_person:
+          type: integer
+        menu_url:
+          type: string
+        contact_phone:
+          type: string
+        google_places_id:
+          type: string
+        gurume_id:
+          type: string
+
+    VenueSelectionRequest:
+      type: object
+      required:
+        - selected_venue_id
+      properties:
+        selected_venue_id:
+          type: string
+
+    VenueResponse:
+      type: object
+      properties:
+        venue_id:
+          type: string
+        name:
+          type: string
+        address:
+          type: string
+        booking_status:
+          $ref: '#/components/schemas/BookingStatus'
+        booking_details:
+          type: string
+
+    TimeSlot:
+      type: object
+      required:
+        - start_time
+        - end_time
+      properties:
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+
+    CoordinationPreferences:
+      type: object
+      properties:
+        require_schedule_confirmation:
+          type: boolean
+          default: false
+        require_venue_confirmation:
+          type: boolean
+          default: false
+
+    EventType:
+      type: string
+      enum:
+        - dining
+        - study
+        - meeting
+
+    EventStatus:
+      type: string
+      enum:
+        - created
+        - collecting_participants
+        - scheduling
+        - venue_search
+        - calendar_booking
+        - final_confirmation
+        - announced
+        - completed
+        - cancelled
+        - error
+
+    ParticipationStatus:
+      type: string
+      enum:
+        - pending
+        - confirmed
+        - declined
+        - no_response
+
+    VenueType:
+      type: string
+      enum:
+        - restaurant
+        - meeting_room
+        - external
+
+    BookingStatus:
+      type: string
+      enum:
+        - pending
+        - confirmed
+        - failed
+        - manual_required
