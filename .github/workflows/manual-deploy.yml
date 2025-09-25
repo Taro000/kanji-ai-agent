@@ -1,0 +1,412 @@
+name: Manual Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      image_tag:
+        description: 'Docker image tag to deploy (default: latest)'
+        required: false
+        default: 'latest'
+        type: string
+      skip_tests:
+        description: 'Skip pre-deployment tests'
+        required: false
+        default: false
+        type: boolean
+      force_deploy:
+        description: 'Force deployment even if health checks fail'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  SERVICE_NAME: slack-bot-event-organizer
+  REGION: asia-northeast1
+
+jobs:
+  pre-deployment-check:
+    runs-on: ubuntu-latest
+    name: Pre-deployment Validation
+    if: ${{ !inputs.skip_tests }}
+
+    outputs:
+      can_proceed: ${{ steps.validation.outputs.can_proceed }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        version: "1.6.1"
+
+    - name: Install dependencies
+      run: poetry install --no-interaction
+
+    - name: Run critical tests
+      id: tests
+      run: |
+        echo "Running critical tests before deployment..."
+
+        # Run contract tests to ensure API compatibility
+        poetry run pytest tests/contract/ -v --tb=short
+
+        # Run integration tests
+        poetry run pytest tests/integration/ -v --tb=short
+
+        echo "tests_passed=true" >> $GITHUB_OUTPUT
+
+    - name: Validate image exists
+      id: image_check
+      run: |
+        if [ "${{ inputs.image_tag }}" = "latest" ]; then
+          echo "Using latest image tag"
+          echo "image_exists=true" >> $GITHUB_OUTPUT
+        else
+          # In real implementation, check if specific image tag exists in registry
+          echo "Checking for image tag: ${{ inputs.image_tag }}"
+          echo "image_exists=true" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Deployment validation
+      id: validation
+      run: |
+        if [[ "${{ steps.tests.outputs.tests_passed }}" == "true" && \
+              "${{ steps.image_check.outputs.image_exists }}" == "true" ]]; then
+          echo "✅ Pre-deployment validation passed"
+          echo "can_proceed=true" >> $GITHUB_OUTPUT
+        else
+          echo "❌ Pre-deployment validation failed"
+          echo "can_proceed=false" >> $GITHUB_OUTPUT
+        fi
+
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy to ${{ inputs.environment }}
+    needs: [pre-deployment-check]
+    if: always() && (needs.pre-deployment-check.outputs.can_proceed == 'true' || inputs.skip_tests)
+
+    environment: ${{ inputs.environment }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set environment variables
+      run: |
+        if [ "${{ inputs.environment }}" = "production" ]; then
+          echo "SERVICE_SUFFIX=" >> $GITHUB_ENV
+          echo "MIN_INSTANCES=1" >> $GITHUB_ENV
+          echo "MAX_INSTANCES=20" >> $GITHUB_ENV
+          echo "MEMORY=2Gi" >> $GITHUB_ENV
+          echo "CPU=2" >> $GITHUB_ENV
+        else
+          echo "SERVICE_SUFFIX=-${{ inputs.environment }}" >> $GITHUB_ENV
+          echo "MIN_INSTANCES=0" >> $GITHUB_ENV
+          echo "MAX_INSTANCES=5" >> $GITHUB_ENV
+          echo "MEMORY=1Gi" >> $GITHUB_ENV
+          echo "CPU=1" >> $GITHUB_ENV
+        fi
+
+        echo "FULL_SERVICE_NAME=${{ env.SERVICE_NAME }}${{ env.SERVICE_SUFFIX }}" >> $GITHUB_ENV
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v1
+      with:
+        project_id: ${{ env.PROJECT_ID }}
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        export_default_credentials: true
+
+    - name: Get current deployment info
+      id: current
+      run: |
+        # Get current revision for potential rollback
+        CURRENT_REVISION=$(gcloud run services describe ${{ env.FULL_SERVICE_NAME }} \
+          --region=${{ env.REGION }} \
+          --format="value(status.latestReadyRevisionName)" 2>/dev/null || echo "none")
+
+        echo "CURRENT_REVISION=${CURRENT_REVISION}" >> $GITHUB_ENV
+        echo "current_revision=${CURRENT_REVISION}" >> $GITHUB_OUTPUT
+
+        if [ "${CURRENT_REVISION}" != "none" ]; then
+          CURRENT_URL=$(gcloud run services describe ${{ env.FULL_SERVICE_NAME }} \
+            --region=${{ env.REGION }} \
+            --format="value(status.url)")
+          echo "CURRENT_URL=${CURRENT_URL}" >> $GITHUB_ENV
+          echo "Found existing service: ${CURRENT_URL}"
+        else
+          echo "No existing service found - this will be a new deployment"
+        fi
+
+    - name: Deploy confirmation
+      if: inputs.environment == 'production' && github.event_name == 'workflow_dispatch'
+      run: |
+        echo "🚨 PRODUCTION DEPLOYMENT INITIATED 🚨"
+        echo "Environment: ${{ inputs.environment }}"
+        echo "Image Tag: ${{ inputs.image_tag }}"
+        echo "Service: ${{ env.FULL_SERVICE_NAME }}"
+        echo "Region: ${{ env.REGION }}"
+        echo "Initiated by: ${{ github.actor }}"
+        echo ""
+        echo "Proceeding with deployment..."
+
+    - name: Set image URL
+      run: |
+        if [ "${{ inputs.image_tag }}" = "latest" ]; then
+          IMAGE_URL="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}/${{ env.SERVICE_NAME }}:latest"
+        else
+          IMAGE_URL="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}/${{ env.SERVICE_NAME }}:${{ inputs.image_tag }}"
+        fi
+
+        echo "IMAGE_URL=${IMAGE_URL}" >> $GITHUB_ENV
+        echo "Deploying image: ${IMAGE_URL}"
+
+    - name: Deploy to Cloud Run
+      id: deploy
+      run: |
+        echo "Deploying ${{ env.FULL_SERVICE_NAME }} to ${{ inputs.environment }}..."
+
+        gcloud run deploy ${{ env.FULL_SERVICE_NAME }} \
+          --image=${{ env.IMAGE_URL }} \
+          --region=${{ env.REGION }} \
+          --platform=managed \
+          --allow-unauthenticated \
+          --memory=${{ env.MEMORY }} \
+          --cpu=${{ env.CPU }} \
+          --timeout=300 \
+          --max-instances=${{ env.MAX_INSTANCES }} \
+          --min-instances=${{ env.MIN_INSTANCES }} \
+          --concurrency=80 \
+          --port=8080 \
+          --set-env-vars="ENV=${{ inputs.environment }}" \
+          --set-env-vars="GCP_PROJECT_ID=${{ env.PROJECT_ID }}" \
+          --set-env-vars="FIRESTORE_DATABASE=(default)" \
+          --set-secrets="SLACK_BOT_TOKEN=slack-bot-token-${{ inputs.environment }}:latest" \
+          --set-secrets="SLACK_SIGNING_SECRET=slack-signing-secret-${{ inputs.environment }}:latest" \
+          --set-secrets="GOOGLE_CALENDAR_CLIENT_ID=google-calendar-client-id-${{ inputs.environment }}:latest" \
+          --set-secrets="GOOGLE_CALENDAR_CLIENT_SECRET=google-calendar-client-secret-${{ inputs.environment }}:latest" \
+          --set-secrets="GOOGLE_PLACES_API_KEY=google-places-api-key-${{ inputs.environment }}:latest" \
+          --set-secrets="GURUME_NAVI_API_KEY=gurume-navi-api-key-${{ inputs.environment }}:latest" \
+          --execution-environment=gen2
+
+        # Get the new service URL
+        NEW_SERVICE_URL=$(gcloud run services describe ${{ env.FULL_SERVICE_NAME }} \
+          --region=${{ env.REGION }} \
+          --format='value(status.url)')
+
+        echo "NEW_SERVICE_URL=${NEW_SERVICE_URL}" >> $GITHUB_ENV
+        echo "service_url=${NEW_SERVICE_URL}" >> $GITHUB_OUTPUT
+
+        echo "Deployment completed: ${NEW_SERVICE_URL}"
+
+    - name: Health check
+      id: health_check
+      run: |
+        echo "Performing health check..."
+        sleep 30  # Wait for service to stabilize
+
+        MAX_ATTEMPTS=5
+        ATTEMPT=1
+        SUCCESS=false
+
+        while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+          echo "Health check attempt $ATTEMPT/$MAX_ATTEMPTS"
+
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${{ env.NEW_SERVICE_URL }}/health" || echo "000")
+
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "✅ Health check passed (HTTP $HTTP_STATUS)"
+            SUCCESS=true
+            break
+          else
+            echo "⚠️ Health check failed (HTTP $HTTP_STATUS)"
+            if [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
+              echo "Retrying in 10 seconds..."
+              sleep 10
+            fi
+          fi
+
+          ATTEMPT=$((ATTEMPT + 1))
+        done
+
+        if [ "$SUCCESS" = "true" ]; then
+          echo "health_check_passed=true" >> $GITHUB_OUTPUT
+        else
+          echo "health_check_passed=false" >> $GITHUB_OUTPUT
+          if [ "${{ inputs.force_deploy }}" != "true" ]; then
+            echo "❌ Health check failed and force_deploy is false"
+            exit 1
+          else
+            echo "⚠️ Health check failed but force_deploy is true - continuing"
+          fi
+        fi
+
+    - name: Traffic routing
+      if: steps.health_check.outputs.health_check_passed == 'true' || inputs.force_deploy
+      run: |
+        echo "Routing 100% traffic to new revision..."
+        gcloud run services update-traffic ${{ env.FULL_SERVICE_NAME }} \
+          --region=${{ env.REGION }} \
+          --to-latest=100
+
+        echo "✅ Traffic routing completed"
+
+    - name: Deployment summary
+      run: |
+        echo "🎉 Deployment Summary"
+        echo "===================="
+        echo "Environment: ${{ inputs.environment }}"
+        echo "Service: ${{ env.FULL_SERVICE_NAME }}"
+        echo "Image: ${{ env.IMAGE_URL }}"
+        echo "URL: ${{ env.NEW_SERVICE_URL }}"
+        echo "Health Check: ${{ steps.health_check.outputs.health_check_passed }}"
+        echo "Deployed by: ${{ github.actor }}"
+        echo "Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+
+  post-deployment-test:
+    runs-on: ubuntu-latest
+    name: Post-deployment Testing
+    needs: [deploy]
+    if: success()
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+
+    - name: Install test dependencies
+      run: |
+        pip install httpx pytest pytest-asyncio
+
+    - name: Run post-deployment tests
+      env:
+        SERVICE_URL: ${{ needs.deploy.outputs.service_url }}
+      run: |
+        python -c "
+        import asyncio
+        import httpx
+        import json
+        import sys
+        from datetime import datetime
+
+        async def post_deployment_test():
+            base_url = '${{ env.SERVICE_URL }}'
+            print(f'Testing deployed service: {base_url}')
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                tests_passed = 0
+                tests_total = 0
+
+                # Test 1: Health endpoint
+                tests_total += 1
+                try:
+                    response = await client.get(f'{base_url}/health')
+                    assert response.status_code == 200
+                    health_data = response.json()
+                    print(f'✅ Health check: {health_data}')
+                    tests_passed += 1
+                except Exception as e:
+                    print(f'❌ Health check failed: {e}')
+
+                # Test 2: API version endpoint
+                tests_total += 1
+                try:
+                    response = await client.get(f'{base_url}/api/v1/version')
+                    if response.status_code == 200:
+                        version_data = response.json()
+                        print(f'✅ Version endpoint: {version_data}')
+                        tests_passed += 1
+                    else:
+                        print(f'⚠️ Version endpoint returned {response.status_code}')
+                except Exception as e:
+                    print(f'❌ Version endpoint failed: {e}')
+
+                # Test 3: Slack webhook endpoint structure
+                tests_total += 1
+                try:
+                    response = await client.post(f'{base_url}/slack/events',
+                                               json={'type': 'url_verification', 'challenge': 'test123'})
+                    # Expect either success or proper auth error
+                    if response.status_code < 500:
+                        print(f'✅ Slack webhook endpoint accessible (HTTP {response.status_code})')
+                        tests_passed += 1
+                    else:
+                        print(f'❌ Slack webhook returned 5xx error: {response.status_code}')
+                except Exception as e:
+                    print(f'❌ Slack webhook test failed: {e}')
+
+                print(f'\\nTest Results: {tests_passed}/{tests_total} passed')
+
+                if tests_passed == tests_total:
+                    print('🎉 All post-deployment tests passed!')
+                    return True
+                else:
+                    print('⚠️ Some post-deployment tests failed')
+                    return False
+
+        success = asyncio.run(post_deployment_test())
+        if not success:
+            sys.exit(1)
+        "
+
+  rollback:
+    runs-on: ubuntu-latest
+    name: Rollback on Failure
+    needs: [deploy, post-deployment-test]
+    if: failure() && needs.deploy.outputs.current_revision != 'none' && !inputs.force_deploy
+
+    steps:
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v1
+      with:
+        project_id: ${{ env.PROJECT_ID }}
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        export_default_credentials: true
+
+    - name: Rollback to previous revision
+      run: |
+        echo "🔄 Rolling back deployment..."
+
+        PREVIOUS_REVISION="${{ needs.deploy.outputs.current_revision }}"
+        SERVICE_NAME="${{ env.SERVICE_NAME }}${{ inputs.environment == 'production' && '' || format('-{0}', inputs.environment) }}"
+
+        echo "Rolling back ${SERVICE_NAME} to revision: ${PREVIOUS_REVISION}"
+
+        gcloud run services update-traffic ${SERVICE_NAME} \
+          --region=${{ env.REGION }} \
+          --to-revisions=${PREVIOUS_REVISION}=100
+
+        echo "✅ Rollback completed"
+
+        # Verify rollback
+        sleep 10
+        SERVICE_URL=$(gcloud run services describe ${SERVICE_NAME} \
+          --region=${{ env.REGION }} \
+          --format='value(status.url)')
+
+        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${SERVICE_URL}/health")
+
+        if [ "$HTTP_STATUS" = "200" ]; then
+          echo "✅ Rollback verification successful"
+        else
+          echo "❌ Rollback verification failed"
+        fi

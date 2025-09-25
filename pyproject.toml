@@ -1,0 +1,96 @@
+[tool.poetry]
+name = "slack-bot-event-organizer"
+version = "0.1.0"
+description = "Enhanced Slack Bot Event Organizer AI Agent - Autonomous event coordination with multi-agent architecture"
+authors = ["Claude Code <claude@anthropic.com>"]
+readme = "README.md"
+packages = [{include = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+# Core framework
+agent-development-kit = "^0.1.0"  # Multi-agent coordination framework
+# Slack integration
+slack-bolt = "^1.18.0"
+slack-sdk = "^3.22.0"
+# Google APIs
+google-auth = "^2.23.0"
+google-auth-oauthlib = "^1.0.0"
+google-auth-httplib2 = "^0.1.1"
+google-api-python-client = "^2.97.0"
+# GCP services
+google-cloud-firestore = "^2.11.1"
+google-cloud-secret-manager = "^2.16.4"
+google-cloud-logging = "^3.6.0"
+# HTTP and async
+httpx = "^0.24.1"
+aiohttp = "^3.8.5"
+asyncio = "^3.4.3"
+# Data validation and serialization
+pydantic = "^2.3.0"
+pydantic-settings = "^2.0.3"
+# Utilities
+python-dotenv = "^1.0.0"
+structlog = "^23.1.0"
+tenacity = "^8.2.3"  # Retry logic
+cryptography = "^41.0.4"  # OAuth token encryption
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.0"
+pytest-asyncio = "^0.21.1"
+pytest-mock = "^3.11.1"
+ruff = "^0.0.291"
+mypy = "^1.5.1"
+black = "^23.7.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+event-organizer = "src.cli.main:main"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+    "ARG", # flake8-unused-arguments
+    "SIM", # flake8-simplify
+    "TCH", # flake8-type-checking
+]
+ignore = [
+    "E501",  # line too long, handled by black
+    "B008",  # do not perform function calls in argument defaults
+    "C901",  # too complex
+]
+src = ["src", "tests"]
+exclude = [
+    ".git",
+    "__pycache__",
+    ".venv",
+    "build",
+    "dist",
+]
+
+[tool.ruff.per-file-ignores]
+"tests/**/*" = ["ARG", "S101"]  # Allow unused args and asserts in tests
+
+[tool.ruff.isort]
+known-first-party = ["src"]
+force-single-line = true
+
+[tool.ruff.mccabe]
+max-complexity = 10
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true

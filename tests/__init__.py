@@ -1,0 +1,1 @@
+"""Test package for Slack Bot Event Organizer."""
